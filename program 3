@@ -1,0 +1,146 @@
+// File: BankingApp.java
+package com.example.banking;
+
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+import org.springframework.transaction.annotation.Transactional;
+
+import javax.persistence.*;
+import java.util.List;
+
+// 1. Spring Boot Application
+@SpringBootApplication
+public class BankingApp {
+
+    public static void main(String[] args) {
+        SpringApplication.run(BankingApp.class, args);
+    }
+
+    @Bean
+    public CommandLineRunner demo(AccountRepository accountRepo, TransactionRepository txRepo, BankService bankService) {
+        return args -> {
+            // Create Accounts
+            Account a1 = new Account("Adarsh", 1000.0);
+            Account a2 = new Account("Vicky", 500.0);
+            accountRepo.save(a1);
+            accountRepo.save(a2);
+
+            System.out.println("Initial Balances:");
+            accountRepo.findAll().forEach(System.out::println);
+
+            // Successful Transfer
+            try {
+                bankService.transferMoney(a1.getId(), a2.getId(), 200.0);
+                System.out.println("✅ Successful Transfer of 200");
+            } catch (Exception e) {
+                System.out.println("❌ Failed: " + e.getMessage());
+            }
+
+            // Failing Transfer
+            try {
+                bankService.transferMoney(a1.getId(), a2.getId(), 2000.0); // should fail
+                System.out.println("✅ Transfer shouldn't have succeeded!");
+            } catch (Exception e) {
+                System.out.println("❌ Failed Transfer (rollback): " + e.getMessage());
+            }
+
+            System.out.println("Final Balances:");
+            accountRepo.findAll().forEach(System.out::println);
+
+            System.out.println("\nTransactions:");
+            txRepo.findAll().forEach(System.out::println);
+        };
+    }
+}
+
+// 2. Account Entity
+@Entity
+class Account {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String owner;
+    private Double balance;
+
+    public Account() {}
+    public Account(String owner, Double balance) {
+        this.owner = owner;
+        this.balance = balance;
+    }
+
+    // Getters/Setters
+    public Long getId() { return id; }
+    public String getOwner() { return owner; }
+    public Double getBalance() { return balance; }
+    public void setBalance(Double balance) { this.balance = balance; }
+
+    @Override
+    public String toString() {
+        return "Account{id=" + id + ", owner='" + owner + "', balance=" + balance + '}';
+    }
+}
+
+// 3. Transaction Entity
+@Entity
+class BankTransaction {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private Long fromAccountId;
+    private Long toAccountId;
+    private Double amount;
+
+    public BankTransaction() {}
+    public BankTransaction(Long from, Long to, Double amount) {
+        this.fromAccountId = from;
+        this.toAccountId = to;
+        this.amount = amount;
+    }
+
+    @Override
+    public String toString() {
+        return "Transaction{id=" + id + ", from=" + fromAccountId + ", to=" + toAccountId + ", amount=" + amount + '}';
+    }
+}
+
+// 4. Repositories (Spring Data JPA)
+import org.springframework.data.jpa.repository.JpaRepository;
+interface AccountRepository extends JpaRepository<Account, Long> {}
+interface TransactionRepository extends JpaRepository<BankTransaction, Long> {}
+
+// 5. Service Layer with Transactional Logic
+import org.springframework.stereotype.Service;
+
+@Service
+class BankService {
+
+    private final AccountRepository accountRepo;
+    private final TransactionRepository txRepo;
+
+    public BankService(AccountRepository accountRepo, TransactionRepository txRepo) {
+        this.accountRepo = accountRepo;
+        this.txRepo = txRepo;
+    }
+
+    @Transactional
+    public void transferMoney(Long fromId, Long toId, Double amount) {
+        Account from = accountRepo.findById(fromId)
+                .orElseThrow(() -> new RuntimeException("From Account not found"));
+        Account to = accountRepo.findById(toId)
+                .orElseThrow(() -> new RuntimeException("To Account not found"));
+
+        if (from.getBalance() < amount) {
+            throw new RuntimeException("Insufficient balance");
+        }
+
+        from.setBalance(from.getBalance() - amount);
+        to.setBalance(to.getBalance() + amount);
+
+        accountRepo.save(from);
+        accountRepo.save(to);
+
+        txRepo.save(new BankTransaction(fromId, toId, amount));
+    }
+}
